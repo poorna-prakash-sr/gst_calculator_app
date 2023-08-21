@@ -238,20 +238,20 @@ class _CalculatorHomeState extends State<CalculatorHome> {
   }
 
   void _applyPercentageToResult(double percentage) {
-    setState(() {
-      if (_input.isNotEmpty) {
-        _netprice = _input; // Store the original _input value in _netprice
-        _updateInputWithPercentage(percentage);
-      } else if (_resultIsAvailable()) {
-        _netprice =
-            _resultDisplay; // Store the original _resultDisplay value in _netprice
-        _updateDisplayWithPercentage(percentage);
-      } else {
-        _showPercentageApplicationError();
-        return;
-      }
+    print(_resultIsAvailable());
+    print(_resultDisplay);
+    if (_resultIsAvailable()) {
+      _netprice =
+          _resultDisplay; // Store the original _resultDisplay value in _netprice
+      _updateDisplayWithPercentage(percentage);
       _navigateToGstResultScreen(percentage);
-    });
+    } else if (_input.isNotEmpty) {
+      _netprice = _input; // Store the original _input value in _netprice
+      _updateInputWithPercentage(percentage);
+      _navigateToGstResultScreen(percentage);
+    } else {
+      _showPercentageApplicationError();
+    }
   }
 
   bool _inputIsPresentAndValid() {
@@ -265,8 +265,6 @@ class _CalculatorHomeState extends State<CalculatorHome> {
 
   void _updateInputWithPercentage(double percentage) {
     double currentValue = double.parse(_input);
-    _netprice =
-        _input; // Save the original input to netprice before any operations
     double updatedValue = currentValue + currentValue * (percentage / 100.0);
     _input = updatedValue.toStringAsFixed(2);
     _display = _input;
@@ -292,6 +290,8 @@ class _CalculatorHomeState extends State<CalculatorHome> {
 
   void _navigateToGstResultScreen(double percentage) {
     double evaluation;
+    print(_netprice);
+
     if (_netprice.isNotEmpty) {
       evaluation = double.parse(_netprice);
     } else {
