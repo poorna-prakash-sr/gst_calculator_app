@@ -12,6 +12,7 @@ class _CalculatorHomeState extends State<CalculatorHome> {
       _input = '',
       _error = '',
       _netprice = '';
+  bool _isDarkMode = false;
   double _gstPercentage = 0.0;
 
   List<String> _expression = [];
@@ -27,6 +28,26 @@ class _CalculatorHomeState extends State<CalculatorHome> {
   void dispose() {
     _displayController.dispose();
     super.dispose();
+  }
+
+  double getResponsiveTextSize(double screenWidth) {
+    if (screenWidth < 360) {
+      return 14;
+    } else if (screenWidth < 415) {
+      return 16;
+    } else {
+      return 18;
+    }
+  }
+
+  double getResponsiveButtonPadding(double screenWidth) {
+    if (screenWidth < 360) {
+      return 20;
+    } else if (screenWidth < 415) {
+      return 25;
+    } else {
+      return 30;
+    }
   }
 
   void _appendNumber(String number) {
@@ -308,6 +329,52 @@ class _CalculatorHomeState extends State<CalculatorHome> {
     _applyPercentageToResult(newPercentage);
   }
 
+  @override
+  Widget build(BuildContext context) {
+    double width = MediaQuery.of(context).size.width;
+    double maxWidth = 600;
+    double mainPadding = width < maxWidth ? 8.0 : 24.0;
+
+    return Theme(
+      // Added Theme widget
+      data: _isDarkMode
+          ? ThemeData.dark()
+          : ThemeData.light(), // Decide theme based on _isDarkMode state
+      child: Scaffold(
+        body: SafeArea(
+          child: Stack(
+            children: [
+              Center(
+                child: Container(
+                  width: width > maxWidth ? maxWidth : null,
+                  padding: EdgeInsets.all(mainPadding),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildResultDisplay(),
+                      _buildInputDisplay(),
+                      SizedBox(height: 20),
+                      _buildButtonGrid(),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                top: mainPadding,
+                left: 0,
+                right: 0,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: _buildDarkModeToggle(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildAddPercentageRow() {
     return Expanded(
       child: Row(
@@ -334,26 +401,22 @@ class _CalculatorHomeState extends State<CalculatorHome> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    double width = MediaQuery.of(context).size.width;
-    double maxWidth = 600;
-    double mainPadding = width < maxWidth ? 8.0 : 24.0;
-    return Scaffold(
-      body: Center(
-        child: Container(
-          width: width > maxWidth ? maxWidth : null,
-          padding: EdgeInsets.all(mainPadding),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _buildResultDisplay(),
-              _buildInputDisplay(),
-              SizedBox(height: 20),
-              _buildButtonGrid(),
-            ],
+  Widget _buildDarkModeToggle() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_isDarkMode ? Icons.brightness_2 : Icons.brightness_7),
+          Switch(
+            value: _isDarkMode,
+            onChanged: (value) {
+              setState(() {
+                _isDarkMode = value;
+              });
+            },
           ),
-        ),
+        ],
       ),
     );
   }
@@ -377,13 +440,14 @@ class _CalculatorHomeState extends State<CalculatorHome> {
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       alignment: Alignment.bottomRight,
       child: TextField(
+        showCursor: true,
         controller: _displayController,
         readOnly: true,
         textAlign: TextAlign.right,
         style: TextStyle(fontSize: 24, fontWeight: FontWeight.w500),
         decoration: InputDecoration(border: InputBorder.none, hintText: "0"),
         cursorWidth: 2.0,
-        cursorColor: Colors.black,
+        cursorColor: const Color.fromARGB(255, 204, 9, 9),
         cursorRadius: Radius.circular(2.0),
       ),
     );
@@ -417,22 +481,43 @@ class _CalculatorHomeState extends State<CalculatorHome> {
   }
 
   Widget _buildButton(String text, VoidCallback onPressed) {
+    double screenWidth = MediaQuery.of(context).size.width;
+
+    // Button colors for Dark Mode
+    Color darkBackgroundColor = Colors.grey[800]!;
+    Color darkForegroundColor = Colors.grey[300]!;
+
+    // Button colors for Light Mode
+    Color lightBackgroundColor = Colors.grey[200]!;
+    Color lightForegroundColor = Colors.black;
+
     return Expanded(
       child: Padding(
-        padding: const EdgeInsets.all(8.0),
+        padding: const EdgeInsets.all(4.0),
         child: ElevatedButton(
           onPressed: onPressed,
           child: Text(
             text,
-            style: TextStyle(fontSize: 16),
+            style: TextStyle(
+              fontSize: getResponsiveTextSize(screenWidth),
+              color: _isDarkMode ? darkForegroundColor : lightForegroundColor,
+            ),
           ),
           style: ElevatedButton.styleFrom(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(300),
+            side: BorderSide(
+              color: _isDarkMode ? darkForegroundColor : Colors.grey[400]!,
+              width: 1.5,
             ),
-            backgroundColor: Colors.grey[200],
-            foregroundColor: Colors.black,
-            padding: const EdgeInsets.all(30),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(200),
+            ),
+            backgroundColor:
+                _isDarkMode ? darkBackgroundColor : lightBackgroundColor,
+            foregroundColor:
+                _isDarkMode ? darkForegroundColor : lightForegroundColor,
+            padding: EdgeInsets.all(
+              getResponsiveButtonPadding(screenWidth),
+            ),
           ),
         ),
       ),
