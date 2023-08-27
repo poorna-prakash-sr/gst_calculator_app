@@ -1,4 +1,8 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
+import 'package:gst_calculator/db/db.dart';
+import 'package:gst_calculator/model/CalculationHistory.dart';
 import 'package:gst_calculator/screens/gst_result_screen.dart';
 
 class CalculatorHome extends StatefulWidget {
@@ -13,7 +17,10 @@ class _CalculatorHomeState extends State<CalculatorHome> {
       _error = '',
       _netprice = '';
   bool _isDarkMode = false;
-  double _gstPercentage = 0.0;
+  int? _cursorPosition;
+  bool _manuallySetCursor = false;
+  List<String> _originalExpression = [];
+  bool _percentageApplied = false;
 
   List<String> _expression = [];
   late TextEditingController _displayController;
@@ -52,25 +59,63 @@ class _CalculatorHomeState extends State<CalculatorHome> {
 
   void _appendNumber(String number) {
     if (number == '.' && _input.contains('.')) return;
+
     setState(() {
-      _input += number;
-      _display += number;
-      _displayController.text = _display;
+      if (_manuallySetCursor &&
+          _cursorPosition != null &&
+          _cursorPosition! <= _display.length) {
+        // Update _display and adjust the cursor position
+        _display = _display.substring(0, _cursorPosition!) +
+            number +
+            _display.substring(_cursorPosition!);
+        _cursorPosition = _cursorPosition! + number.length;
+
+        // Update _input correctly with cursor position
+        if (_input.isEmpty &&
+            _expression.isNotEmpty &&
+            !_isOperation(_expression.last)) {
+          _expression[_expression.length - 1] += number;
+        } else {
+          _input = _input.substring(0, min(_input.length, _cursorPosition!)) +
+              number +
+              _input.substring(min(_input.length, _cursorPosition!));
+        }
+
+        // Update the TextEditingController value with new cursor position
+        _displayController.value = _displayController.value.copyWith(
+          text: _display,
+          selection: TextSelection.collapsed(offset: _cursorPosition!),
+        );
+      } else {
+        _input += number;
+        _display += number;
+        _displayController.text = _display;
+      }
+
+      if (_originalExpression.isNotEmpty &&
+          !_isOperation(_originalExpression.last)) {
+        _originalExpression[_originalExpression.length - 1] += number;
+      } else {
+        _originalExpression.add(number);
+      }
+
       _updateLiveResult();
     });
   }
 
   void _handleOperation(String operation) {
     if (_display.isEmpty) return;
+
     setState(() {
       if (isLastCharAnOperation()) {
         var displayParts = _display.trim().split(' ');
         displayParts.removeLast();
         _display = displayParts.join(' ') + ' $operation ';
         _expression.removeLast();
+        _display = _display.substring(0, _display.length - 2) + operation + ' ';
+        _originalExpression[_originalExpression.length - 1] = operation;
       } else {
         if (_input.isEmpty && _expression.isEmpty) {
-          // This means we've just removed an operation and are now adding another
           _expression.add(_display);
         } else if (_input.isNotEmpty) {
           _expression.add(_input);
@@ -80,7 +125,13 @@ class _CalculatorHomeState extends State<CalculatorHome> {
       }
       _expression.add(operation);
       _displayController.text = _display;
+
+      // Adjust the cursor position to the end after an operation
+      _cursorPosition = _display.length;
+      _manuallySetCursor =
+          false; // Reset manual cursor positioning after an operation
     });
+    _originalExpression.add(operation);
   }
 
   bool _isOperation(String char) => ['+', '-', 'X', '/', '%'].contains(char);
@@ -90,15 +141,15 @@ class _CalculatorHomeState extends State<CalculatorHome> {
   void _updateLiveResult() {
     if (_expression.length < 2) return;
     var evalExpression = List.from(_expression);
+
     if (_input.isNotEmpty) evalExpression.add(_input);
+
     double? result = _evaluateExpression(evalExpression);
-    if (result == result!.floor()) {
-      // checks if result is a whole number
-      _resultDisplay =
-          result.toStringAsFixed(0); // Display .00 for whole numbers
+    if (result == null) return;
+    if (result == result.floor()) {
+      _resultDisplay = result.toStringAsFixed(0);
     } else {
-      _resultDisplay = result.toStringAsFixed(
-          2); // Display exact value up to two decimal places for non-whole numbers
+      _resultDisplay = result.toStringAsFixed(2);
     }
   }
 
@@ -159,21 +210,25 @@ class _CalculatorHomeState extends State<CalculatorHome> {
     }
   }
 
-  void _applyGST() {
-    if (_resultDisplay.isNotEmpty) {
-      double result = double.parse(_resultDisplay);
-      double gstAmount = result * _gstPercentage / 100;
-      double cgst = gstAmount / 2;
-      double sgst = cgst;
-      double igst = gstAmount;
+  void _saveCalculation() async {
+    String fullExpression;
 
-      setState(() {
-        _resultDisplay =
-            'Inter-state: CGST: $cgst, SGST: $sgst\nIntra-state: IGST: $igst';
-        _display = (result + gstAmount).toStringAsFixed(2);
-        _displayController.text = _display;
-      });
+    if (_originalExpression.isNotEmpty) {
+      fullExpression = _originalExpression.join(' ');
+    } else if (_input.isNotEmpty) {
+      fullExpression = _input;
+    } else {
+      return; // Nothing to save
     }
+
+    CalculationHistory calculation = CalculationHistory(
+      id: 1,
+      expression: fullExpression,
+      result: _resultDisplay.isNotEmpty ? _resultDisplay : _input,
+      date: DateTime.now(),
+    );
+
+    await DatabaseHelper.instance.insert(calculation);
   }
 
   void _performCalculation() {
@@ -190,15 +245,6 @@ class _CalculatorHomeState extends State<CalculatorHome> {
     });
   }
 
-  void _appendDecimal() {
-    setState(() {
-      _input += '0.00';
-      _display += '0.00';
-      _displayController.text = _display;
-      _updateLiveResult();
-    });
-  }
-
   void _clear() {
     setState(() {
       _input = '';
@@ -206,14 +252,37 @@ class _CalculatorHomeState extends State<CalculatorHome> {
       _resultDisplay = '';
       _expression.clear();
       _error = '';
+      _originalExpression.clear();
       _displayController.text = _display;
+      _manuallySetCursor = false;
+      _cursorPosition = null;
     });
   }
 
   void _removeLastCharacter() {
     if (_display.isEmpty) return;
+
     setState(() {
-      if (isLastCharAnOperation()) {
+      if (_manuallySetCursor &&
+          _cursorPosition != null &&
+          _cursorPosition! > 0) {
+        // Remove character at cursor position and adjust cursor
+        _display = _display.substring(0, _cursorPosition! - 1) +
+            _display.substring(_cursorPosition!);
+
+        if (_cursorPosition! <= _input.length) {
+          _input = _input.substring(0, _cursorPosition! - 1) +
+              (_cursorPosition! < _input.length
+                  ? _input.substring(_cursorPosition!)
+                  : "");
+        }
+
+        _cursorPosition = _cursorPosition! - 1;
+        _displayController.value = _displayController.value.copyWith(
+          text: _display,
+          selection: TextSelection.collapsed(offset: _cursorPosition!),
+        );
+      } else if (isLastCharAnOperation()) {
         var displayParts = _display.trim().split(' ');
         _display = displayParts.sublist(0, displayParts.length - 1).join(' ');
 
@@ -228,26 +297,61 @@ class _CalculatorHomeState extends State<CalculatorHome> {
         _display = _display.substring(0, _display.length - 1);
         _input = _input.substring(0, _input.length - 1);
 
-        if (_expression.isNotEmpty) {
+        if (_expression.isNotEmpty && !_isOperation(_expression.last)) {
           _expression[_expression.length - 1] = _input;
         }
       }
-      _displayController.text = _display;
       _updateLiveResult();
+      if (!_manuallySetCursor) {
+        _displayController.text = _display;
+      }
     });
   }
 
   void _applyPercentageToResult(double percentage) {
-    print(_resultIsAvailable());
-    print(_resultDisplay);
     if (_resultIsAvailable()) {
-      _netprice =
-          _resultDisplay; // Store the original _resultDisplay value in _netprice
-      _updateDisplayWithPercentage(percentage);
+      double currentResult = double.parse(_resultDisplay);
+      _netprice = currentResult.toStringAsFixed(2); // Capture the exact value
+
+      double gstAmount = currentResult * (percentage / 100.0);
+      double updatedResult;
+
+      if (percentage > 0) {
+        _originalExpression = [_netprice, "+", percentage.toString() + "%"];
+        updatedResult = currentResult + gstAmount;
+      } else {
+        _originalExpression = [_netprice, "-", (-percentage).toString() + "%"];
+        updatedResult = currentResult - gstAmount;
+      }
+
+      _resultDisplay = updatedResult.toStringAsFixed(2);
+      _display = _resultDisplay;
+      _displayController.text = _display;
+      _percentageApplied = true;
+
+      _saveCalculation(); // Save to database
       _navigateToGstResultScreen(percentage);
-    } else if (_input.isNotEmpty) {
-      _netprice = _input; // Store the original _input value in _netprice
-      _updateInputWithPercentage(percentage);
+    } else if (_inputIsPresentAndValid()) {
+      double currentValue = double.parse(_input);
+      _netprice = currentValue.toStringAsFixed(2); // Capture the exact value
+
+      double gstAmount = currentValue * (percentage / 100.0);
+      double updatedValue;
+
+      if (percentage > 0) {
+        _originalExpression = [_netprice, "+", percentage.toString() + "%"];
+        updatedValue = currentValue + gstAmount;
+      } else {
+        _originalExpression = [_netprice, "-", (-percentage).toString() + "%"];
+        updatedValue = currentValue - gstAmount;
+      }
+
+      _input = updatedValue.toStringAsFixed(2);
+      _display = _input;
+      _displayController.text = _display;
+      _percentageApplied = true;
+
+      _saveCalculation(); // Save to database
       _navigateToGstResultScreen(percentage);
     } else {
       _showPercentageApplicationError();
@@ -290,6 +394,7 @@ class _CalculatorHomeState extends State<CalculatorHome> {
 
   void _navigateToGstResultScreen(double percentage) {
     double evaluation;
+
     print(_netprice);
 
     if (_netprice.isNotEmpty) {
@@ -326,6 +431,9 @@ class _CalculatorHomeState extends State<CalculatorHome> {
   }
 
   void _updateGSTPercentage(double newPercentage) {
+    _originalExpression = List.from(_expression);
+    if (_input.isNotEmpty) _originalExpression.add(_input);
+    _performCalculation(); // Evaluate the current expression first
     _applyPercentageToResult(newPercentage);
   }
 
@@ -335,41 +443,38 @@ class _CalculatorHomeState extends State<CalculatorHome> {
     double maxWidth = 600;
     double mainPadding = width < maxWidth ? 8.0 : 24.0;
 
-    return Theme(
-      // Added Theme widget
-      data: _isDarkMode
-          ? ThemeData.dark()
-          : ThemeData.light(), // Decide theme based on _isDarkMode state
-      child: Scaffold(
-        body: SafeArea(
-          child: Stack(
-            children: [
-              Center(
-                child: Container(
-                  width: width > maxWidth ? maxWidth : null,
-                  padding: EdgeInsets.all(mainPadding),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _buildResultDisplay(),
-                      _buildInputDisplay(),
-                      SizedBox(height: 20),
-                      _buildButtonGrid(),
-                    ],
-                  ),
+    return Scaffold(
+      backgroundColor: _isDarkMode ? Colors.grey[900] : Colors.grey[200],
+      drawer: _buildDrawer(),
+      appBar: AppBar(
+        backgroundColor: _isDarkMode ? Colors.grey[900] : Colors.grey[200],
+        title: Text(
+          "GST Calculator",
+          style: TextStyle(color: _isDarkMode ? Colors.white : Colors.black),
+        ),
+        iconTheme: IconThemeData(
+          color: _isDarkMode ? Colors.white : Colors.black,
+        ),
+      ),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: Container(
+                width: width > maxWidth ? maxWidth : null,
+                padding: EdgeInsets.all(mainPadding),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildResultDisplay(),
+                    _buildInputDisplay(),
+                    SizedBox(height: 20),
+                    _buildButtonGrid(),
+                  ],
                 ),
               ),
-              Positioned(
-                top: mainPadding,
-                left: 0,
-                right: 0,
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: _buildDarkModeToggle(),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -422,20 +527,25 @@ class _CalculatorHomeState extends State<CalculatorHome> {
   }
 
   Widget _buildResultDisplay() {
+    double screenWidth = MediaQuery.of(context).size.width * 1.5;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       alignment: Alignment.bottomRight,
       child: Text(
         _resultDisplay,
-        style: const TextStyle(
-          fontSize: 24,
+        style: TextStyle(
+          fontSize: getResponsiveTextSize(screenWidth),
           fontWeight: FontWeight.w400,
+          color: _isDarkMode ? Colors.white : Colors.black,
         ),
       ),
     );
   }
 
   Widget _buildInputDisplay() {
+    double screenWidth = MediaQuery.of(context).size.width;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       alignment: Alignment.bottomRight,
@@ -444,11 +554,21 @@ class _CalculatorHomeState extends State<CalculatorHome> {
         controller: _displayController,
         readOnly: true,
         textAlign: TextAlign.right,
-        style: TextStyle(fontSize: 24, fontWeight: FontWeight.w500),
+        style: TextStyle(
+          fontSize: getResponsiveTextSize(screenWidth),
+          fontWeight: FontWeight.w500,
+          color: _isDarkMode ? Colors.white : Colors.black,
+        ),
         decoration: InputDecoration(border: InputBorder.none, hintText: "0"),
         cursorWidth: 2.0,
         cursorColor: const Color.fromARGB(255, 204, 9, 9),
         cursorRadius: Radius.circular(2.0),
+        onTap: () {
+          setState(() {
+            _cursorPosition = _displayController.selection.start;
+            _manuallySetCursor = true;
+          });
+        },
       ),
     );
   }
@@ -481,7 +601,7 @@ class _CalculatorHomeState extends State<CalculatorHome> {
   }
 
   Widget _buildButton(String text, VoidCallback onPressed) {
-    double screenWidth = MediaQuery.of(context).size.width;
+    double screenWidth = MediaQuery.of(context).size.width * 0.1;
 
     // Button colors for Dark Mode
     Color darkBackgroundColor = Colors.grey[800]!;
@@ -520,6 +640,48 @@ class _CalculatorHomeState extends State<CalculatorHome> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildDrawer() {
+    return Drawer(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: <Widget>[
+          DrawerHeader(
+            child: Text('Settings'),
+          ),
+          ListTile(
+            title: Text('Dark Mode'),
+            leading:
+                Icon(_isDarkMode ? Icons.brightness_2 : Icons.brightness_7),
+            trailing: Switch(
+              value: _isDarkMode,
+              onChanged: (value) {
+                setState(() {
+                  _isDarkMode = value;
+                });
+              },
+            ),
+          ),
+          ListTile(
+            title: Text('+1%'),
+            onTap: () => _updateGSTPercentage(1.0),
+          ),
+          ListTile(
+            title: Text('+5%'),
+            onTap: () => _updateGSTPercentage(5.0),
+          ),
+          ListTile(
+            title: Text('+12%'),
+            onTap: () => _updateGSTPercentage(12.0),
+          ),
+          ListTile(
+            title: Text('+18%'),
+            onTap: () => _updateGSTPercentage(18.0),
+          ),
+        ],
       ),
     );
   }
